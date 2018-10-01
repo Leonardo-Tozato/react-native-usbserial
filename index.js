@@ -2,7 +2,8 @@
 
 import {
   Platform,
-  NativeModules
+  NativeModules,
+  DeviceEventEmitter
 } from 'react-native';
 import UsbSerialDevice from './UsbSerialDevice';
 
@@ -24,5 +25,12 @@ export class UsbSerial {
             return new UsbSerialDevice(UsbSerialModule, usbSerialDevNativeObject);
         });
     }
+
+    monitorDevice(handler) {
+        if(this.eventListener) this.eventListener.remove();
+        this.eventListener = DeviceEventEmitter.addListener('UsbSerialEvent', handler);
+    }
+
+
 }
 

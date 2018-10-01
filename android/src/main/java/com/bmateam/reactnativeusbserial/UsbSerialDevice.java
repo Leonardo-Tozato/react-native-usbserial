@@ -2,6 +2,7 @@ package com.bmateam.reactnativeusbserial;
 
 import com.facebook.react.bridge.Promise;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
+import android.util.Log;
 
 import java.io.IOException;
 
@@ -33,11 +34,21 @@ public class UsbSerialDevice {
     public void readAsync(Promise promise) {
 
         if (port != null) {
-            // TODO
-            promise.resolve(null);
+            try {
+               byte buffer[] = new byte[16];
+                int numBytesRead = this.port.read(buffer, 1000);
+                Log.v("ReactNative", "blah");
+                promise.resolve(new String(buffer, "UTF-8"));
+            } catch (IOException e) {
+                promise.reject(e);
+            }
         } else {
             promise.resolve(getNoPortErrorMessage());
         }
+    }
+
+    public UsbSerialPort getPort(){
+        return this.port;
     }
 
     private Exception getNoPortErrorMessage() {

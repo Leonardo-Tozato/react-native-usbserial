@@ -17,26 +17,80 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.modules.core.DeviceEventManagerModule;
 import com.hoho.android.usbserial.driver.UsbSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
-
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver;
+import com.hoho.android.usbserial.driver.ProbeTable;
+import com.hoho.android.usbserial.util.SerialInputOutputManager;
+import android.util.Log;
+import java.io.UnsupportedEncodingException;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ReactUsbSerialModule extends ReactContextBaseJavaModule {
 
     private final HashMap<String, UsbSerialDevice> usbSerialDriverDict = new HashMap<>();
+    private final ProbeTable customTable = new ProbeTable();
+    private final UsbSerialProber customProber;
+    private static final String UsbEventName="UsbSerialEvent";
+    private ReactApplicationContext reactContext;
+    private SerialInputOutputManager mSerialIoManager;
+    private final ExecutorService mExecutor = Executors.newSingleThreadExecutor();
+    private final SerialInputOutputManager.Listener mListener = new SerialInputOutputManager.Listener() {
+        @Override
+        public void onRunError(Exception e) {
+            Log.v("React-Native", "Runner stopped.");
+        }
+
+        @Override
+        public void onNewData(final byte[] data) {
+            try{
+                Log.v("Chamou", "Shazam");
+                sendEvent(new String(data, "UTF-8"));
+            }catch(UnsupportedEncodingException e){
+                e.printStackTrace();
+            }
+        }
+    };
 
     public ReactUsbSerialModule(ReactApplicationContext reactContext) {
         super(reactContext);
+        this.reactContext = reactContext;
+        this.customTable.addProduct(1240, 61537, CdcAcmSerialDriver.class);
+        this.customProber = new UsbSerialProber(this.customTable);
     }
 
     @Override
     public String getName() {
         return "UsbSerial";
+    }
+
+    @ReactMethod
+    public void startIoManager(String deviceId) {
+        try{
+            UsbSerialDevice usd = usbSerialDriverDict.get(deviceId);
+
+            if (usd == null) {
+                throw new Exception(String.format("No device opened for the id '%s'", deviceId));
+            }
+
+            UsbSerialPort sPort = usd.getPort();
+            if (sPort != null) {
+                Log.v("React-Native", "Starting io manager ..");
+                mSerialIoManager = new SerialInputOutputManager(sPort, mListener);
+                mExecutor.submit(mSerialIoManager);
+            }
+            
+        }catch (Exception e) {
+            e.printStackTrace();
+        }
+        
     }
 
     @ReactMethod
@@ -106,6 +160,33 @@ public class ReactUsbSerialModule extends ReactContextBaseJavaModule {
         }
     }
 
+    @ReactMethod
+    public void readFromDeviceAsync(String deviceId, Promise p) {
+        try {
+            UsbSerialDevice usd = usbSerialDriverDict.get(deviceId);
+
+            if (usd == null) {
+                throw new Exception(String.format("No device opened for the id '%s'", deviceId));
+            }
+
+            usd.readAsync(p);
+        } catch (Exception e) {
+           p.reject(e);
+        }
+    }
+
+    // private UsbSerialInterface.UsbReadCallback mCallback = new UsbSerialInterface.UsbReadCallback() {
+    //     @Override
+    //     public string onReceivedData(byte[] data) {
+    //         try {
+    //             Log.i("Chamou", "Shazam");
+    //             sendEvent(new String(data, "UTF-8"));
+    //         } catch (UnsupportedEncodingException e) {
+    //             e.printStackTrace();
+    //         }
+    //     }
+    // };
+
     private WritableMap createUsbSerialDevice(UsbManager manager,
                                               UsbSerialDriver driver) throws IOException {
 
@@ -119,6 +200,7 @@ public class ReactUsbSerialModule extends ReactContextBaseJavaModule {
 
         String id = generateId();
         UsbSerialDevice usd = new UsbSerialDevice(port);
+        //usd.read(mCallback);
         WritableMap map = Arguments.createMap();
 
         // Add UsbSerialDevice to the usbSerialDriverDict map
@@ -127,6 +209,12 @@ public class ReactUsbSerialModule extends ReactContextBaseJavaModule {
         map.putString("id", id);
 
         return map;
+    }
+
+    private void sendEvent(String data) {
+        WritableMap params = Arguments.createMap();
+        params.putString("data", data);
+        reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class).emit(UsbEventName, params);
     }
 
     private void requestUsbPermission(UsbManager manager,
@@ -160,13 +248,14 @@ public class ReactUsbSerialModule extends ReactContextBaseJavaModule {
             throw new Error(new Error("The deviceObject is not a valid 'UsbDevice' reference"));
 
         List<UsbSerialDriver> availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager);
-
         // Reject if no driver is available
-        if (availableDrivers.isEmpty())
-            throw new Exception("No available drivers to communicate with devices");
-
+        if (availableDrivers.isEmpty()){
+            availableDrivers = customProber.findAllDrivers(manager);
+            if (availableDrivers.isEmpty())
+                throw new Exception("No available drivers to communicate with devices");
+        }
         for (UsbSerialDriver drv : availableDrivers) {
-
+            
             if (drv.getDevice().getProductId() == prodId)
                 return drv;
         }
